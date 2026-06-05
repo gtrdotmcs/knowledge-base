@@ -1,0 +1,650 @@
+“Retrieval‑Augmented Generation (RAG) has rapidly become the dominant paradigm for building AI systems that combine the reasoning power of large language models (LLMs) with up‑to‑date, domain‑specific, or proprietary knowledge. Unlike traditional LLMs, which are limited by their training data and knowledge cutoff, RAG systems dynamically retrieve relevant information from external sources and ground their responses in this context, dramatically improving factual accuracy, reducing hallucinations, and enabling traceable, verifiable outputs.”
+
+markdown
+# Proof of Concept for Modern Retrieval‑Augmented Generation (RAG) System
+
+## Minimal End-to-End Proof of Concept for Modern Retrieval-Augmented Generation (RAG) Systems
+
+### Introduction
+Retrieval-Augmented Generation (RAG) has rapidly become the dominant paradigm for building AI systems that combine the reasoning power of large language models (LLMs) with up-to-date, domain-specific, or proprietary knowledge. Unlike traditional LLMs, which are limited by their training data and knowledge cutoff, RAG systems dynamically retrieve relevant information from external sources and ground their responses in this context, dramatically improving factual accuracy, reducing hallucinations, and enabling traceable, verifiable outputs.
+
+This report presents a minimal yet comprehensive Proof of Concept (PoC) for a modern RAG system. The goal is to provide an end-to-end, educationally valuable implementation that covers all core architectural components—document ingestion, chunking, embedding, vector storage, retrieval, reranking, prompt orchestration, LLM integration, and evaluation—while remaining simple, clear, and accessible for learning and experimentation. The design reflects current best practices and tooling as of mid-2026, and is suitable for both academic and practical exploration.
+
+---
+
+## Why This PoC? Educational Value and Modernity
+A minimal RAG PoC is the ideal learning vehicle for several reasons:
+
+- **Clarity:** By stripping away production-scale complexity (e.g., distributed orchestration, multi-tenant security, or high-traffic scaling), the PoC allows each architectural component to be understood in isolation and in context.
+- **Completeness:** The PoC is end-to-end, demonstrating the full RAG pipeline from raw documents to grounded answers and evaluation, mirroring the architecture of modern, real-world RAG systems.
+- **Modernity:** The design incorporates up-to-date models, vector databases, retrieval strategies, and evaluation metrics, reflecting the state of the art in 2026.
+- **Extensibility:** The PoC is modular, allowing learners to swap out components (e.g., try different embedding models or vector stores) and observe the impact on system behavior.
+- **Reproducibility:** The system is designed to run locally or in a cloud notebook, with open-source dependencies and minimal configuration, making it accessible to students, researchers, and practitioners.
+
+---
+
+## Overview of the Minimal RAG PoC Architecture
+
+| Component            | Role in RAG Pipeline                                           | Example Tools/Models                                 | Learning Focus                                 |
+|----------------------|----------------------------------------------------------------|-----------------------------------------------------|------------------------------------------------|
+| Document Ingestion   | Load and preprocess documents from various formats             | LangChain, LlamaIndex, PyPDF2                       | Data loading, format handling                  |
+| Chunking             | Split documents into manageable, semantically coherent chunks  | RecursiveCharacterTextSplitter                      | Chunk size, overlap, semantic vs. fixed split  |
+| Embedding Model      | Convert text chunks and queries into dense vector representations | OpenAI text-embedding-3-small, BGE                  | Embedding quality, model selection, batching   |
+| Vector Database      | Store and index embeddings for efficient similarity search     | Chroma, Qdrant, FAISS                               | Storage, filtering, hybrid search              |
+| Retrieval Strategy   | Retrieve top-K relevant chunks for a query                     | Vector search, BM25, hybrid                         | Recall, precision, hybrid retrieval            |
+| Reranker             | Re-score and reorder retrieved chunks for improved relevance   | BGE-Reranker, Cohere Rerank                         | Cross-encoder reranking, latency vs. quality   |
+| Prompt Orchestration | Assemble retrieved context and user query into a prompt for the LLM | Prompt templates, LangChain                         | Context assembly, prompt engineering           |
+| LLM Inference        | Generate answer grounded in retrieved context                  | GPT-4o, Llama 3, Claude Sonnet                      | LLM integration, context window management     |
+| Evaluation           | Measure retrieval and generation quality using standard metrics| RAGAS, custom scripts                               | Recall@K, faithfulness, answer relevance       |
+
+---
+
+## 1. Document Ingestion Pipeline
+
+**Purpose and Scope**  
+The ingestion pipeline is the foundation of any RAG system. It transforms raw, heterogeneous documents (PDFs, DOCX, Markdown, web pages, etc.) into a normalized, structured form suitable for downstream processing.
+
+**Key Steps**
+- **Document Loading:** Use robust loaders to handle various file types and encodings. Frameworks like LangChain and LlamaIndex provide out-of-the-box loaders.
+- **Text Extraction:** Extract plain text while preserving structural information (section headers, tables).
+- **Metadata Enrichment:** Attach metadata such as source, creation date, author, and document type to each chunk for filtering and traceability.
+- **Deduplication and Cleaning:** Remove duplicate content and handle encoding issues.
+
+**Example (Python, LangChain)**
+```python
+from langchain_community.document_loaders import PyPDFLoader
+loader = PyPDFLoader("sample_manual.pdf")
+docs = loader.load()
+Best Practices
+
+Use specialized loaders for PDFs, DOCX, HTML, and web content.
+
+Preserve structure (headers, lists) to improve chunking and retrieval.
+
+Attach metadata (source, filename) to each chunk for auditability.
+
+2. Chunking Strategies and Overlap
+Why Chunking Matters  
+Chunking splits documents into smaller pieces ("chunks") that can be embedded and retrieved. Chunking strategy (size, overlap) affects retrieval accuracy, context quality, and cost.
+
+Common Methods
+
+Fixed-size chunking (by characters/tokens)
+
+Recursive character chunking (paragraph → sentence → word)
+
+Token-based chunking (respect model token limits)
+
+Semantic/sentence chunking (topic-aware)
+
+Structure-aware chunking (use headers, HTML tags)
+
+Hybrid/contextual chunking
+
+Practical Defaults (2026)
+
+Chunk size: 256–512 tokens
+
+Overlap: 10–20% (e.g., 50–100 tokens for 512-token chunks)
+
+Best for accuracy: Semantic chunking
+
+Best for speed: Recursive chunking
+
+Example (LangChain RecursiveCharacterTextSplitter)
+
+python
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=100)
+chunks = splitter.split_documents(docs)
+Analysis
+
+Too small chunks (<200 tokens) lose context.
+
+Too large chunks (>2000 tokens) dilute relevance and increase cost.
+
+Overlap prevents splitting key information across chunks.
+
+3. Embedding Model Selection and Embedding Service Design
+Role of Embeddings  
+Embeddings convert text into high-dimensional vectors capturing semantic meaning. Use the same model for both document chunks and queries.
+
+Model Selection: Cloud vs. Open Source
+
+Model	Dimensions	Context Window	Best For	Cost/Notes
+OpenAI text-embedding-3-small	1536	8,191	General, cost-effective	Cloud API
+OpenAI text-embedding-3-large	3072	8,191	High accuracy	Cloud API
+Cohere embed-v3	1024	512	Multilingual, hybrid	Cloud API
+BGE-large-en-v1.5	1024	512	Open-source, self-hosted	Self-hosted
+E5-mistral-7b-instruct	4096	32,768	Long-context, open-source	Self-hosted
+all-MiniLM-L6-v2	384	256	Fast, lightweight, local	Free, local
+
+
+Embedding Service Design
+
+Batching: Embed multiple chunks per call to maximize throughput.
+
+Caching: Cache embeddings to reduce cost and latency.
+
+Latency: Local models are fast for small data; cloud APIs scale better for large batches.
+
+Monitoring: Track latency, throughput, and cache hit rates.
+
+Example: Local Embedding Service (SentenceTransformers)
+
+python
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer('BAAI/bge-large-en-v1.5')
+embeddings = model.encode(documents, normalize_embeddings=True)
+Best Practices
+
+Use the same model for indexing and querying.
+
+Normalize embeddings if vector DB does not do so automatically.
+
+Benchmark on your data before committing.
+
+4. Vector Database and Storage Options
+Purpose  
+A vector database stores embeddings and metadata, enabling efficient similarity search and filtering.
+
+Popular Vector Databases
+
+Database	Type	Hosting	Filtering	Hybrid Search	Best For
+Chroma	Embedded	Local/Docker	Basic	No	Prototyping, small datasets
+Pinecone	Managed	Cloud	Advanced	Yes	Production, zero-ops
+Qdrant	Open	Self/Cloud	Advanced	Yes	Performance, open-source
+Weaviate	Open	Self/Cloud	Advanced	Yes	Hybrid search, full control
+Milvus	Open	Self/Cloud	Advanced	Yes	Large-scale, GPU support
+pgvector	Extension	Postgres	SQL	Yes	Teams using PostgreSQL
+
+
+Key Features
+
+Similarity search (cosine, L2, inner product)
+
+Metadata filtering (source, date, access level)
+
+Hybrid search (vector + BM25)
+
+Example: Chroma (Prototyping)
+
+python
+from langchain_community.vectorstores import Chroma
+vectorstore = Chroma.from_documents(chunks, embeddings, persist_directory="./chroma_db")
+Example: Qdrant (Scalable)
+
+python
+from qdrant_client import QdrantClient
+client = QdrantClient(location=":memory:")
+client.create_collection(collection_name="documents", vectors_config=VectorParams(size=768, distance=Distance.COSINE))
+Analysis
+
+Chroma: Local dev and small PoCs.
+
+Qdrant/Weaviate: Open-source, scalable.
+
+Pinecone: Managed production.
+
+pgvector: For Postgres users.
+
+5. Retrieval Strategies: Vector, Hybrid, and Filtering
+Retrieval in RAG  
+Retrieval finds the most relevant chunks for a query; retrieval quality directly impacts answer factuality.
+
+Methods
+
+Vector Similarity Search: Top-K by cosine similarity.
+
+Keyword Search (BM25): Exact matches, identifiers.
+
+Hybrid Search: Combine vector and BM25; merge results via weighted scoring or reranking.
+
+Example: Hybrid Retrieval (LangChain)
+
+python
+from langchain.retrievers import EnsembleRetriever
+from langchain_community.retrievers import BM25Retriever
+
+bm25_retriever = BM25Retriever.from_documents(chunks)
+vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+
+hybrid_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, vector_retriever],
+    weights=[0.4, 0.6]
+)
+Filtering
+
+Metadata filtering (document type, date, access level)
+
+Access control at retrieval time
+
+Best Practices
+
+Tune top-K (e.g., 5, 10, 20).
+
+Use hybrid search when both keyword precision and semantic recall matter.
+
+Apply metadata filters for security/compliance.
+
+6. Reranking: Cross-Encoder Rerankers and Lightweight Alternatives
+Why Reranking?  
+Bi-encoder retrieval is fast but may misorder candidates. Cross-encoder rerankers jointly encode query+chunk for better relevance at higher latency.
+
+Reranking Pipeline
+
+Retrieve top-N candidates (20–50).
+
+Score each query-chunk pair with a reranker.
+
+Select top-M (3–5) for the LLM prompt.
+
+Popular Rerankers
+
+BGE-reranker-v2-m3 (open, multilingual)
+
+Cohere Rerank API (managed)
+
+ms-marco-MiniLM-L-6-v2 (fast, lightweight)
+
+Voyage Rerank 2.5 (high accuracy, API)
+
+FlashRank (CPU-only, lightweight)
+
+Example: BGE Reranker (Python)
+
+python
+from FlagEmbedding import FlagReranker
+reranker = FlagReranker('BAAI/bge-reranker-v2-m3', device='cuda')
+scores = reranker.compute_score([[query, doc] for doc in docs])
+Lightweight Alternatives
+
+MiniLM Cross-Encoder (CPU-friendly)
+
+FlashRank (CPU-only)
+
+Trade-offs
+
+Reranking adds latency (50–400ms) but can improve top-3 precision significantly.
+
+Self-hosted rerankers may need GPUs; APIs cost money.
+
+Best Practices
+
+Prototype with MiniLM or FlashRank.
+
+Rerank only top-N to control cost/latency.
+
+Benchmark impact on your data.
+
+7. Prompt Orchestration and Context Assembly
+Purpose  
+Assemble retrieved context and user query into a prompt. Good prompt engineering improves faithfulness and citation accuracy.
+
+Prompt Template Example
+
+python
+def create_rag_prompt(query, retrieved_documents):
+    context = "\n\n".join([doc['text'] for doc in retrieved_documents])
+    prompt_template = f"""You are a helpful assistant that answers questions based on the provided context.
+Context: {context}
+Question: {query}
+Instructions:
+1. Answer the question using only information from the provided context.
+2. If the context doesn't contain relevant information, say "I don't have enough information to answer this question."
+3. Cite specific parts of the context when possible.
+4. Provide a concise, accurate answer.
+Answer:"""
+    return prompt_template
+Context Packing
+
+Order by relevance.
+
+Respect LLM context window; truncate or select chunks to fit.
+
+Optionally number/tag chunks for citation.
+
+Advanced Techniques
+
+Dynamic context assembly to maximize coverage and minimize redundancy.
+
+Conditional generation: change prompt style based on user or context.
+
+8. LLM Inference Integration and Hosting
+LLM Integration  
+The LLM receives the orchestrated prompt and generates an answer grounded in retrieved context. Integration can be via API or frameworks like LangChain/LlamaIndex.
+
+Example: OpenAI GPT-4o API
+
+python
+from openai import OpenAI
+client = OpenAI()
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[
+        {"role": "system", "content": "You answer questions based on provided context."},
+        {"role": "user", "content": rag_prompt}
+    ],
+    temperature=0.1,
+    max_tokens=500
+)
+Hosting Options
+
+Cloud APIs: OpenAI, Anthropic, Cohere, Google Gemini
+
+Self-hosted: Llama 3, Mistral, Gemma via vLLM or Ollama
+
+Local inference for small models
+
+Considerations
+
+Ensure prompt fits model token limit.
+
+Balance latency and cost.
+
+Use streaming for chat UX.
+
+9. Orchestration Patterns and Microservice Topology
+Monolithic vs. Microservice
+
+Monolithic PoC: All components in one process — simplest for learning.
+
+Microservice: Separate services for ingestion, retrieval, reranking, generation — better for scaling.
+
+Minimal PoC Recommendation
+
+Use a monolithic architecture for clarity.
+
+Keep modular code: each component as a function/class.
+
+Example Repositories
+
+dannyblaker/rag-tutorial
+
+deontsanchez/rag-system-poc (FastAPI + React + Chroma + OpenAI)
+
+Gangarapu-Yashwanth-Kumar/RAG-Pipeline-Document-Ingestion-Embeddings-Vector-Search
+
+10. Evaluation: Retrieval and Generation Metrics
+Why Evaluate?  
+Evaluation measures and improves RAG quality: retrieval must find right context; generation must be accurate and faithful.
+
+Retrieval Metrics
+
+Recall@K
+
+Precision@K
+
+Hit Rate / Hit@K
+
+MRR (Mean Reciprocal Rank)
+
+nDCG
+
+Generation Metrics
+
+Faithfulness (supported by context)
+
+Answer relevance
+
+Factual consistency
+
+Fluency and coherence
+
+End-to-End Metrics
+
+Groundedness (proportion of answer supported by context)
+
+Hallucination rate
+
+Human evaluation (ratings for relevance, informativeness)
+
+Tools
+
+RAGAS (automated faithfulness evaluation)
+
+LlamaIndex evaluation module
+
+Custom scripts for small datasets
+
+Example: RAGAS Evaluation
+
+python
+from ragas import evaluate
+from ragas.metrics import faithfulness, answer_relevancy, context_recall
+from datasets import Dataset
+
+eval_dataset = Dataset.from_dict({
+    "question": ["What is the capital of France?"],
+    "answer": ["Paris"],
+    "contexts": [["Paris is the capital of France."]],
+    "ground_truth": ["Paris"]
+})
+
+result = evaluate(
+    dataset=eval_dataset,
+    metrics=[faithfulness, answer_relevancy, context_recall]
+)
+print(result)
+Best Practices
+
+Start with a small curated evaluation set (50–100 questions).
+
+Automate metrics but include human review.
+
+Iterate: tune chunking, retrieval, reranking, and prompts.
+
+11. Small Datasets and Ground-Truth Creation for PoC
+Dataset Design
+
+Choose a small focused corpus (company manual, FAQ, research papers).
+
+Create representative queries (50–100).
+
+For each query, specify ground-truth answer and source chunk(s).
+
+Example Datasets
+
+LlamaHub RAG Evaluation Datasets (COVIDQA, SQuADv2, ESG Bench)
+
+Hugging Face rag-datasets (Mini Wikipedia, Mini BioASQ)
+
+Custom internal documents
+
+Ground-Truth Creation
+
+Manual curation for high quality.
+
+Synthetic generation with LLMs followed by human review.
+
+12. Tooling, Frameworks, and Example Repositories
+Leading Frameworks
+
+LangChain: Orchestration-first, agent tooling, observability (LangSmith).
+
+LlamaIndex: Data-centric, indexing and query abstractions.
+
+Haystack: Document-oriented, production-ready pipelines.
+
+RAGAS: Evaluation framework.
+
+Example Repositories
+
+dannyblaker/rag-tutorial
+
+deontsanchez/rag-system-poc
+
+abhinav-kimothi/RAG-Exercise
+
+Gangarapu-Yashwanth-Kumar/RAG-Pipeline-Document-Ingestion-Embeddings-Vector-Search
+
+13. Observability, Logging, and Tracing
+Importance  
+Observability helps debug and monitor RAG systems. Even PoCs benefit from basic logging and tracing.
+
+What to Monitor
+
+Retrieval latency and relevance scores
+
+Generation latency and token usage
+
+Cache hit rates
+
+User queries and feedback
+
+Error rates
+
+Tools
+
+Logging: Python logging, FastAPI logs
+
+Tracing: OpenTelemetry, Prometheus, Grafana
+
+Evaluation dashboards: RAGAS, LangSmith, custom notebooks
+
+14. Security, Privacy, and Governance for PoC
+Minimal PoC Considerations
+
+Input sanitization to prevent injection.
+
+Basic access control (API key or local auth).
+
+PII filtering before embedding.
+
+Audit logging for traceability.
+
+Data residency considerations (e.g., DPDP Act 2023 in India).
+
+Best Practices
+
+Enforce access control at retrieval (vector DB filters).
+
+Encrypt data at rest and in transit.
+
+Use document-level ACLs and metadata filtering.
+
+15. Deployment, Scaling, and Cost Trade-Offs
+Minimal PoC Deployment
+
+Local development on laptop or cloud notebook.
+
+Dockerize for reproducibility.
+
+Use managed vector DBs and LLM APIs for rapid prototyping.
+
+Scaling Considerations
+
+Monolithic PoC: <50 QPS and small datasets.
+
+Microservice: separate ingestion, retrieval, generation for scale.
+
+GPU hosting for self-hosted LLMs/rerankers.
+
+Cost Optimization
+
+Use open-source models where possible.
+
+Cache frequent queries and embeddings.
+
+Right-size vector DB instances.
+
+16. Lightweight Reranker Alternatives for PoC
+MiniLM Cross-Encoder: Fast, CPU-friendly for prototyping.
+
+FlashRank: CPU-only, open-source.
+
+BGE-reranker-v2-m3: Multilingual, requires GPU for real-time.
+
+Recommendation: Start with MiniLM or FlashRank for PoC; upgrade to BGE or Cohere Rerank for production.
+
+17. Educational Design: Lab Exercises and Learning Outcomes
+Suggested Lab Exercises
+
+Document ingestion and preprocessing.
+
+Chunking experiments (size/overlap).
+
+Embedding model comparisons (OpenAI vs BGE vs MiniLM).
+
+Vector DB comparison (Chroma vs Qdrant).
+
+Hybrid retrieval vs vector-only.
+
+Reranking impact measurement.
+
+Prompt engineering experiments.
+
+Evaluation with RAGAS.
+
+Observability and logging.
+
+Security and PII filtering.
+
+Learning Outcomes
+
+Understand RAG architecture and workflow.
+
+Hands-on experience with ingestion, chunking, embedding, retrieval.
+
+Learn evaluation and improvement cycles.
+
+Appreciate trade-offs between quality, latency, and cost.
+
+Develop prompt engineering and LLM integration skills.
+
+Recognize security, privacy, and governance needs.
+
+18. Local and Regional Considerations (India): Hosting and Data Residency
+Data Residency and Compliance
+
+DPDP Act 2023: certain workloads may require Indian data centers.
+
+Local hosting reduces latency.
+
+Prefer providers with INR billing for cost predictability.
+
+Indian GPU Cloud Providers (2026)
+
+Provider	Starting Price	GPU Models	Managed?	Uptime SLA	Best For
+CloudMinister	₹50,000/mo	A30, A100, L40s, V100	Fully Managed	99.99%	Indian businesses, AI training
+Leapswitch	₹16,523/mo	H200, H100, A100	Semi-Managed	99.95%	Dedicated GPU workloads
+AceCloud	₹35,000/mo	A30, A100, L40S, H100	Cloud-Managed	99.9%	Pay-as-you-go AI/ML teams
+Cantech	₹19,500/mo	A2, A40, A5000, H100	Semi-Managed	99.97%	Mid-size AI & rendering
+ServerBasket	₹24,999/mo	A100, V100, RTX A4000	Semi-Managed	99.9%+	On-premise + cloud hybrid
+MilesWeb	₹5,100/mo	Entry-level NVIDIA	Semi-Managed	99.95%	Budget entry-level GPU hosting
+Serverwala	₹53,820/mo	A100, multi-GPU	Semi-Managed	99.9%	Enterprise custom GPU configs
+
+
+Recommendation: For PoC and educational use, start locally or use cloud-managed GPU providers with Indian data residency.
+
+19. Summary Table: RAG PoC Components and Roles
+Component	Role in RAG Pipeline	Example Tools/Models	Learning Focus
+Document Ingestion	Load and preprocess documents from various formats	LangChain, LlamaIndex, PyPDF2	Data loading, format handling
+Chunking	Split documents into manageable, semantically coherent chunks	RecursiveCharacterTextSplitter	Chunk size, overlap, semantic vs. fixed split
+Embedding Model	Convert text chunks and queries into dense vector representations	OpenAI text-embedding-3-small, BGE	Embedding quality, model selection, batching
+Vector Database	Store and index embeddings for efficient similarity search	Chroma, Qdrant, FAISS	Storage, filtering, hybrid search
+Retrieval Strategy	Retrieve top-K relevant chunks for a query	Vector search, BM25, hybrid	Recall, precision, hybrid retrieval
+Reranker	Re-score and reorder retrieved chunks for improved relevance	BGE-Reranker, Cohere Rerank	Cross-encoder reranking, latency vs. quality
+Prompt Orchestration	Assemble retrieved context and user query into a prompt for the LLM	Prompt templates, LangChain	Context assembly, prompt engineering
+LLM Inference	Generate answer grounded in retrieved context	GPT-4o, Llama 3, Claude Sonnet	LLM integration, context window management
+Evaluation	Measure retrieval and generation quality using standard metrics	RAGAS, custom scripts	Recall@K, faithfulness, answer relevance
+
+
+20. Conclusion: Why This PoC Is Suitable for Learning Modern RAG Systems
+This minimal end-to-end RAG PoC provides a clear, modular, and extensible foundation for understanding and experimenting with modern retrieval-augmented generation systems. By covering all critical components—document ingestion, chunking, embedding, vector storage, retrieval, reranking, prompt orchestration, LLM integration, and evaluation—it mirrors the architecture of production-grade RAG systems while remaining accessible for educational use.
+
+Key strengths of this PoC:
+
+Clarity: Each component is isolated and explained, making the system easy to understand and modify.
+
+Completeness: The pipeline is end-to-end, demonstrating the full RAG workflow from raw documents to grounded answers and evaluation.
+
+Modernity: Incorporates up-to-date models, vector databases, retrieval strategies, and evaluation metrics.
+
+Extensibility: Modular design allows learners to swap out components and observe the impact.
+
+Reproducibility: Runs locally or in the cloud with open-source dependencies and minimal configuration.
+
+Educational Value: Supports hands-on lab exercises, enabling learners to build, evaluate, and improve RAG systems.
+
+By mastering this PoC, learners will gain a deep, practical understanding of how modern RAG systems are built, evaluated, and deployed—preparing them for both academic research and real-world AI engineering.
